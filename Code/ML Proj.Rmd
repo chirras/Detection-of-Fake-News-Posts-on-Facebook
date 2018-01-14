@@ -1,0 +1,361 @@
+---
+title: "Final Project"
+output: html_document
+---
+
+
+```{r, eval = FALSE}
+
+install.packages("e1071","randomForest","rpart","ROCR","pamr")
+
+```
+
+
+
+```{r, warning=FALSE, message=FALSE}
+
+require(e1071)
+require(rpart)
+require(ROCR)
+require(pamr)
+require(randomForest)
+
+```
+
+
+```{r}
+
+# Getting weighted average of post and comment vectors
+
+for (i in 1:nrow(final))
+{
+  weightedVectors[i,] <- (commentVectors[i,]*(0) + postVectors[i,]*(1))
+}
+
+finalVar <- data.frame(final[,-(8:307)])
+finalVar <- cbind(finalVar, weightedVectors)
+
+train <- subset(finalVar, finalVar$post_id %in% trainInitial$post_id)
+test <- subset(finalVar, finalVar$post_id %in% testInitial$post_id)
+
+
+```
+
+
+
+```{r}
+
+
+#converting into numeric vectors and response to factors
+
+train$Debate <-as.numeric(train$Debate)
+train$share_count <- as.numeric(train$share_count)
+train$reaction_count <- as.numeric(train$reaction_count)
+train$comment_count <- as.numeric(train$comment_coun)
+train$Rating <- as.factor(train$Rating)
+
+
+test$Debate <-as.numeric(test$Debate)
+test$share_count <- as.numeric(test$share_count)
+test$reaction_count <- as.numeric(test$reaction_count)
+test$comment_count <- as.numeric(test$comment_coun)
+test$Rating <- as.factor(test$Rating)
+
+
+```
+
+
+----------------------------------------------------------------------------------------------------------------
+
+
+# Navie Bayes
+
+```{r}
+
+# Building model using all predictors in naiyes bayes 
+
+model1 <- naiveBayes(Rating ~ ., data = train[,3:307])
+class(model1)
+summary(model1)
+
+
+```
+
+
+
+# Model 1: Using all predictors
+
+```{r}
+
+## Train Data
+
+# Calculating predicted probabilities on the same training set
+trainScores <- predict(model1, newdata = train[,4:307])
+
+# Prediction on the training set using model
+trainTable <- table(true= train[,3], predict= trainScores)
+
+# Prediction accuracy of our model
+sum(diag(prop.table(trainTable)))
+
+# compare predicted probabilities to labels, for varying probability cutoffs
+trainPred <- prediction(as.numeric(trainScores), labels= train$Rating)
+trainPerf <- performance(trainPred, "tpr", "fpr")
+
+# plot the ROC curve
+plot(trainPerf, colorize=T, main="ROC Curve for Naiyes bayes on train data using all predictors")
+
+#  the area under the ROC curve
+unlist(attributes(performance(trainPred, "auc"))$y.values)
+
+
+
+## Test Data
+
+# Calculate predicted probabilities on test set
+testScores <- predict(model1, newdata=test[,4:307])
+
+# Prediction on the test set 
+testTable <- table(true= test[,3], predict= testScores)
+
+# Prediction accuracy of the model
+sum(diag(prop.table(testTable)))
+
+# Compare predicted probabilities to labels, for varying probability cutoffs
+testPred <- prediction(as.numeric(testScores), labels= test$Rating )
+testPerf <- performance(testPred, "tpr", "fpr")
+
+# Plot the ROC curve
+plot(testPerf, colorize=T, main="ROC Curve for Naiyes bayes on test data using all predictors")
+
+# Area under the ROC curve
+unlist(attributes(performance(testPred, "auc"))$y.values)
+
+
+```
+
+
+
+# Model 2: Using only uncorrelated predictors 
+
+We know that 
+share_count  has a strong correlation of 0.908204 with reaction_count 
+share_count  has a strong correlation of 0.705319 with comment_count 
+
+```{r}
+
+# Omitting the highly correlated predictors in Training set
+train_n <- train[,-c(1,2,5,6,7)]
+
+# Building model using only uncorrelated predictors  
+model2 <- naiveBayes(Rating ~ ., data = train_n)
+
+class(model2)
+summary(model2)
+
+```
+
+
+
+
+```{r}
+
+## Train Data
+
+# Calculate predicted probabilities on the same training set using model 2
+trainScoresM2 <- predict(model2, newdata=train_n[,2:302])
+
+# Prediction on the training set using model 2
+trainTableM2 <- table(true= train_n[,1], predict=trainScoresM2)
+
+# Prediction accuracy of our model 2 is 
+sum(diag(prop.table(trainTableM2)))
+
+# Compare predicted probabilities to labels, for varying probability cutoffs
+trainPredM2 <- prediction(as.numeric(trainScoresM2), labels= train_n$Rating )
+trainPerfM2 <- performance(trainPredM2, "tpr", "fpr")
+
+# Plot the ROC curve
+plot(trainPerfM2, colorize=T, main="ROC curve for Naiyes bayes using Un-Correlated predictors on train data")
+
+# Area under the ROC curve  for model 2
+unlist(attributes(performance(trainPredM2, "auc"))$y.values)
+
+
+
+## Test Data
+
+# Omitting the highly correlated predictors in test set
+test_n <- test[,-c(1,2,5,6,7)]
+
+# Calculate predicted probabilities on the same training set using model 2
+testScoresM2 <- predict(model2, newdata=test_n[,2:302])
+
+# Prediction on the training set using model 2
+testTableM2 <- table(true= test_n[,1], predict=testScoresM2)
+
+# Prediction accuracy of our model 2 is 
+sum(diag(prop.table(testTableM2)))
+
+# Compare predicted probabilities to labels, for varying probability cutoffs
+testPredM2 <- prediction(as.numeric(testScoresM2), labels= test_n$Rating )
+testPerfM2 <- performance(testPredM2, "tpr", "fpr")
+
+# Plot the ROC curve
+plot(testPerfM2, colorize=T, main="ROC curve for Naiyes bayes using Un-Correlated predictors on test data")
+
+# Area under the ROC curve  for model 2
+unlist(attributes(performance(testPredM2, "auc"))$y.values)
+
+
+```
+
+
+
+
+----------------------------------------------------------------------------------------------------------------
+
+
+## Nearest Shrunken Centroid
+
+
+```{r}
+
+set.seed(100)
+
+# Reformat the dataset for parm
+pamrTrain <- list(x=t(as.matrix(train[,-c(1,2,3)])), y=train[,3])
+pamrValid <- list(x=t(as.matrix(test[,-c(1,2,3)])), y=test[,3])
+
+## Train Data
+# Fit the classifier on the entire training set
+fit.pamr <- pamr.train(pamrTrain)
+
+# Use cross-validation to select the best regularization parameter
+fit.cv.pamr <- pamr.cv(fit.pamr, pamrTrain)
+pamr.plotcv(fit.cv.pamr)
+
+# Getting the value of minimum threshold
+threshold <- fit.cv.pamr$threshold[which.min(fit.cv.pamr$error)]
+
+# Refit the classifier on the full dataset, but using the threshold
+fit.pamr <- pamr.train(pamrTrain, threshold=threshold)
+
+# Confusion matrix for train data
+pamr.confusion(fit.cv.pamr, threshold=threshold)
+
+
+
+```
+
+
+
+# Prediction Accuracy 
+
+```{r}
+
+## Training Set
+
+# ROC on the training set
+pred.pamr.train <- pamr.predict(fit.pamr, newx=pamrTrain$x, threshold= threshold, type="posterior")[,2]
+pred <- prediction(predictions=pred.pamr.train, labels= pamrTrain$y)
+perf <- performance(pred, "tpr", "fpr")
+plot(perf, colorize=T, main="Nearest shrunken centroids for train data")
+
+# print out the area under the curve
+unlist(attributes(performance(pred, "auc"))$y.values)
+
+
+## Test Set
+
+# ROC on the test set
+pred.pamr.valid <- pamr.predict(fit.pamr, newx=pamrValid$x, threshold=threshold, type="posterior")[,2]
+pred <- prediction(predictions=pred.pamr.valid, labels= pamrValid$y)
+perf <- performance(pred, "tpr", "fpr")
+plot(perf, colorize=T, main="Nearest shrunken centroids for test data")
+
+# print out the area under the curve
+unlist(attributes(performance(pred, "auc"))$y.values)
+
+```
+
+
+
+----------------------------------------------------------------------------------------------------------------
+
+## Random Forest
+
+
+#Model Building
+```{r}
+
+set.seed(100)
+
+model <- randomForest(Rating~., data = train[,3:307],importance= T, mtry= round(sqrt(304),0))
+model
+
+```
+
+
+
+# Performance Measure
+```{r}
+
+
+## Train Data
+
+predTrain <- predict(model, newdata = train[,4:307])
+tableTrain <- table(predTrain, train$Rating)
+
+# Prediction accuracy of model
+sum(diag(prop.table(tableTrain)))
+
+# ROC on the train set
+rf.pr = predict(model, type="prob", newdata=train[,(4:307)])[,2]
+rf.pred = prediction(rf.pr, train$Rating)
+rf.perf = performance(rf.pred,"tpr","fpr")
+plot(rf.perf,main="ROC Curve for Random Forest for train data",col=2,lwd=2)
+
+# print out the area under the curve
+unlist(attributes(performance(rf.pred, "auc"))$y.values)
+
+
+
+## Test Data
+
+predTest <- predict(model, newdata = test[,4:307])
+tableTest <- table(predTest, test$Rating)
+
+# Prediction accuracy of model
+sum(diag(prop.table(tableTest)))
+
+# ROC on the test set
+rf.pr = predict(model, type="prob", newdata=test[,(4:307)])[,2]
+rf.pred = prediction(rf.pr, test$Rating)
+rf.perf = performance(rf.pred,"tpr","fpr")
+plot(rf.perf,main="ROC Curve for Random Forest for test data",col=2,lwd=2)
+
+# print out the area under the curve
+unlist(attributes(performance(rf.pred, "auc"))$y.values)
+
+
+```
+
+
+
+# Important variables
+
+```{r}
+
+head(importance(model))
+
+varImpPlot(model)
+
+```
+
+
+This plots helps us to identify the important variables. It gives a measure of decrease in accuracy if that variable is removed from the model building process. 
+
+Share count is one of the most important variables.
+
+Also, we know that share count, comment count and reaction count are highly correlated. Using Randomforest and not just bagging helps us to decorrelate the predictors(as it takes only a subset of predictor for growing each new tree). we have grown 500 trees.

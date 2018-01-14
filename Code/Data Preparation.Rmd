@@ -1,0 +1,218 @@
+---
+title: "Data Preparation"
+output: html_document
+---
+
+```{r}
+require(Rfacebook)
+require(wordVectors)
+require(feather)
+require(stringr)
+```
+
+
+```{r}
+df <- read.csv("https://raw.githubusercontent.com/BuzzFeedNews/2016-10-facebook-fact-check/master/data/facebook-fact-check.csv")
+names(df)
+
+token <- "EAACEdEose0cBAJwDGZCeOdhvBeZCZB64xZBWUQFToxqkMJvwsEXDULShoR9d6WdZBza7nur3tFaGVG6SdJMeT0XITqXOHjb59bmueZBLbXYqrQtEaqxf8XM6BST948lANLddSVAxcZBXWZAZCgv5BQDXvs2IRYD7VrrZAWDR1tIhi5EYFtcq1WI4rrmjKoesLOlgoZD"
+
+me <- getUsers("me", token=token)
+```
+
+#Collecting posts from Facebook API
+```{r}
+df$post_id <- paste(df$account_id,'_',df$post_id, sep = "")
+
+#removing dysfunctional post ids
+df<- df[-c(1128,1326,2201),]
+
+
+post <- c()
+
+for(i in 1:nrow(df))
+{
+  post <- c(post, getPost(df$post_id[i], token = token, n = 1000, likes = TRUE, comments = TRUE))
+}
+
+```
+
+#Collecting Comments and cleaning the file 
+```{r}
+for (i in 1:nrow(df))
+{
+  comments <- c(comments, sapply(post[i*3]$comments[3], function(x) gettext(post[i*3]$comments[3])))
+}
+
+comments <- gsub("[^[:alnum:][:blank:]+?&/\\-]", "", comments)
+corpus <- Corpus(VectorSource(comments))
+
+inspect(corpus[500])
+commentFB <- tm_map(corpus, removePunctuation)
+commentFB <- tm_map(commentFB, removeWords, c(stopwords("english"), "http.*"))
+commentFB <- tm_map(commentFB, content_transformer(tolower))
+commentFB <- tm_map(commentFB, removeNumbers)
+commentFB <- tm_map(commentFB, stripWhitespace)
+
+
+lapply(comments, write, "commentsClean.txt", append=TRUE)
+```
+
+#Training the vectors using word2vec skip-grams model on the entire comments corpus
+```{r}
+trainComment <- train_word2vec("CommentsClean.txt", output_file = "train1.bin",vector=300)
+```
+
+
+#Taking only comments present in the final dataset
+```{r}
+comments1<- comments[as.numeric(rownames(final))]
+```
+
+#Getting vectors for comments
+```{r, cache=T}
+v <- c()
+ for( i in 1: length(comments1))
+ {
+  x <-  as.vector(strsplit(comments1[i]," +"))
+  a <- c()
+  for( j in 1:length(x[[1]]))
+  {  
+           a <- rbind(a,trainComments1[[ x[[1]][j] ]] )
+    
+  }
+  d <- colMeans(a,na.rm = T)
+  
+  v <- rbind(v, d)
+}
+   
+```
+
+#Getting post messages from post list elements
+```{r}
+#1 , 4, 7, 
+#str(post)
+post_mess <- data.frame()
+post_message<- data.frame()
+j = 1 
+for (i in 1:length(post))
+{
+    if(i ==1 ){
+    post_message[j,1] <-   post[[i]][1]
+     post_message[j,2] <-  post[[i]][3]
+    rbind(post_mess, post_message)
+    j = j + 1
+    }
+
+  else{
+    if ( i %% 3 == 1){
+      post_message[j,1] <-  post[[i]][1]
+      post_message[j,2]  <- post[[i]][3]
+       rbind(post_mess, post_message)
+       j = j+ 1
+    }
+  }
+}
+
+
+```
+
+
+
+#Getting  vectors for post message and storing in a matrix named r 
+```{r}
+ r <- c()
+ for( i in 1: nrow(post_message))
+ {
+  x <-  as.vector(strsplit(post_message$message[i]," +"))
+  a <- c()
+  for( j in 1:length(x[[1]]))
+  {  
+           a <- rbind(a,trainComments[[ x[[1]][j] ]] )
+    
+  }
+  d <- colMeans(a,na.rm = T)
+ 
+  
+  r <- rbind(r, d)
+}
+```
+
+#adding post vectors to the finaldataset
+```{r}
+ f <- as.data.frame(r)
+finalDataset[,13:312] <- f[,1:300]
+finalDataset <- na.omit(finalDataset)
+```
+
+
+#Taking relevant columns
+```{r}
+dataset <- subset(finalDataset, select = -c(account_id, Category, Page, Post.URL,Date.Published))
+#dataset$Rating <- as.factor(dataset$Rating)
+#dataset$Debate <- as.factor(dataset$Debate)
+names(dataset)  
+str(dataset)
+```
+
+
+
+
+The original dataset has an imbalanced no of reponse categorical variables
+
+Response factors notation
+mix 1
+no factual  content : 4
+mostly true 3
+mostly false 2 
+
+We shall prepare a new datset for analyis which shall contain a balance of mostly true(~67 %) and mostly  false (~33 % ) response variables.
+```{r}
+#converting to factors
+dataset$Rating <- as.factor(as.numeric(dataset$Rating))
+str(dataset$Rating)
+
+#Removing mix and no factual content and reassigning factors: true = 1 and false = 0 
+dataset1 <- dataset[dataset$Rating!=1 ,]
+dataset1 <- dataset1[dataset1$Rating!=4 ,]
+dataset1$Rating <- as.numeric(gsub(3, 1, dataset1$Rating))
+dataset1$Rating <- as.numeric(gsub(2, 0, dataset1$Rating))
+
+dataset1$Rating <- as.factor(dataset1$Rating)
+
+true <- dataset1[dataset1$Rating == 1,]
+false <- dataset1[dataset1$Rating == 0,]
+
+final <- rbind(true[1:192,], false)
+
+#assigning 0 for no debate(empty cells) and 1 for debate
+final$Debate <- gsub("yes",1 ,final$Debate)
+final$Debate <- gsub(" ","" ,final$Debate)
+final$Debate <- gsub("",0 ,final$Debate)
+final$Debate <- gsub(0101,1 ,final$Debate)
+```
+
+
+#Taking only comments present in the final dataset
+```{r}
+comments1<- comments[as.numeric(rownames(final))]
+```
+
+#Getting vectors for comments
+```{r, cache=T}
+comments_vec <- c()
+ for( i in 1: length(comments1))
+ {
+  x <-  as.vector(strsplit(comments1[i]," +"))
+  a <- c()
+  for( j in 1:length(x[[1]]))
+  {  
+           a <- rbind(a,trainComments[[ x[[1]][j] ]] )
+    
+  }
+  d <- colMeans(a,na.rm = T)
+  
+  comments_vec <- rbind(comments_vec, d)
+}
+   
+```
